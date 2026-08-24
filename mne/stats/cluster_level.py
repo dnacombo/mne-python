@@ -1842,7 +1842,8 @@ def cluster_test(
 
     # determine test type
     if len(X) == 1:
-        kind = "within"  # data already subtracted
+        kind = "within"  # single group -- e.g. already-subtracted paired data
+        X = X[0]
     elif len(X) > 2:
         kind = "between"
     elif (
