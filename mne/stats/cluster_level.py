@@ -2132,3 +2132,111 @@ class ClusterResult:
         )
 
         plt.show()
+
+    def plot_cluster_time_frequency(
+        self,
+        inst,
+        cmap_topo: None | str | tuple = None,
+        cmap_spectrogram: str = "autumn",
+    ):
+        """
+        Plot the time-frequency cluster with the lowest p-value.
+
+        For 3D (time x frequency x channel) clusters, i.e. results of a test run on
+        time-frequency data (see :class:`~mne.time_frequency.EpochsTFR` /
+        :class:`~mne.time_frequency.AverageTFR`). It is difficult to visualize such
+        clusters directly, so a topomap of the statistic averaged over the cluster's
+        time-frequency extent is shown next to a spectrogram (maximized over the
+        cluster's channels if there is more than one). Time-frequency points that
+        are part of the cluster are highlighted in the spectrogram.
+
+        Parameters
+        ----------
+        inst : EpochsTFR | AverageTFR
+            A representative time-frequency object, used only for its ``info``
+            (channel layout) and ``times``/``freqs`` axes.
+        cmap_topo : matplotlib colormap
+            Colormap to use for the topomap.
+        cmap_spectrogram : matplotlib colormap
+            Colormap used to highlight the cluster's time-frequency extent in the
+            spectrogram panel.
+        """
+        lowest_p_cluster = np.argmin(self.cluster_p_values)
+        cluster = self.clusters[lowest_p_cluster]
+        if not isinstance(cluster, tuple):
+            raise ValueError(
+                "plot_cluster_time_frequency() requires clusters in 'indices' "
+                'format; re-run cluster_test() with out_type="indices" (the '
+                'default) instead of "mask".'
+            )
+        if len(cluster) != 3:
+            raise ValueError(
+                "plot_cluster_time_frequency() requires a 3D (time x frequency x "
+                f"channel) cluster, got a {len(cluster)}D cluster. For 2D "
+                "(time x channel) clusters, use plot_cluster_time_sensor() instead."
+            )
+        # cluster_test() puts data in (time, frequency, channel) order
+        time_inds, freq_inds, space_inds = (np.unique(inds) for inds in cluster)
+        ch_inds = np.unique(space_inds)
+
+        # topography of the statistic, averaged over the cluster's time-frequency
+        # extent
+        stat_map = self.stat_obs[time_inds].mean(axis=0)[freq_inds].mean(axis=0)
+        sig_times = inst.times[time_inds]
+
+        fig, ax_topo = plt.subplots(1, 1, figsize=(10, 3), layout="constrained")
+
+        mask = np.zeros((stat_map.shape[0], 1), dtype=bool)
+        mask[ch_inds, :] = True
+
+        stat_evoked = EvokedArray(stat_map[:, np.newaxis], inst.info, tmin=0)
+        stat_evoked.plot_topomap(
+            times=0,
+            mask=mask,
+            axes=ax_topo,
+            cmap=cmap_topo,
+            vlim=(np.min, np.max),
+            show=False,
+            colorbar=False,
+            mask_params=dict(markersize=10),
+        )
+        image = ax_topo.images[0]
+
+        divider = make_axes_locatable(ax_topo)
+        ax_colorbar = divider.append_axes("right", size="5%", pad=0.05)
+        plt.colorbar(image, cax=ax_colorbar)
+        ax_topo.set_xlabel(
+            "Averaged {} ({:0.3f} - {:0.3f} s)".format(
+                self.stat_name, *sig_times[[0, -1]]
+            )
+        )
+        ax_topo.set_title("")
+
+        # spectrogram, maximized over the cluster's channels
+        ax_spec = divider.append_axes("right", size="300%", pad=1.2)
+        title = f"{len(ch_inds)}-sensor spectrogram"
+        if len(ch_inds) > 1:
+            title += " (max over channels)"
+        # transpose to (frequency, time) for display
+        stat_plot = self.stat_obs[..., ch_inds].max(axis=-1).T
+        stat_plot_sig = np.full(stat_plot.shape, np.nan)
+        grid = tuple(np.meshgrid(freq_inds, time_inds))
+        stat_plot_sig[grid] = stat_plot[grid]
+
+        for values, cmap in zip((stat_plot, stat_plot_sig), ("gray", cmap_spectrogram)):
+            image_spec = ax_spec.imshow(
+                values,
+                cmap=cmap,
+                aspect="auto",
+                origin="lower",
+                extent=[inst.times[0], inst.times[-1], inst.freqs[0], inst.freqs[-1]],
+            )
+        ax_spec.set_xlabel("Time (s)")
+        ax_spec.set_ylabel("Frequency (Hz)")
+        ax_spec.set_title(title)
+
+        ax_colorbar2 = divider.append_axes("right", size="5%", pad=0.05)
+        plt.colorbar(image_spec, cax=ax_colorbar2)
+        ax_colorbar2.set_ylabel(self.stat_name)
+
+        plt.show()

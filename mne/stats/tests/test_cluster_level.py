@@ -1199,3 +1199,62 @@ def test_cluster_test_formula_validation():
     df_unbalanced = pd.DataFrame(rows)
     with pytest.raises(ValueError, match="must have exactly"):
         cluster_test(df_unbalanced, "data ~ a:b", within_id="subject")
+
+
+@pytest.mark.filterwarnings("ignore:FigureCanvasAgg is non-interactive.*:UserWarning")
+def test_cluster_test_plot_cluster_time_frequency():
+    """Test ClusterResult.plot_cluster_time_frequency."""
+    import matplotlib.pyplot as plt
+
+    pd = pytest.importorskip("pandas")
+
+    rng = np.random.default_rng(seed=0)
+    n_subjects, n_channels, n_freqs, n_times = 6, 4, 3, 5
+    ch_names = ["Fz", "Cz", "Pz", "Oz"]
+    info = create_info(ch_names, sfreq=100.0, ch_types="eeg")
+    info.set_montage("colin27_1020")
+    freqs = np.arange(n_freqs)
+    times = np.arange(n_times) / 10.0
+
+    def make_tfr(bump):
+        data = rng.normal(size=(n_channels, n_freqs, n_times))
+        if bump:
+            data[:2, 1:, 2:] += 4
+        return AverageTFRArray(info=info, data=data, times=times, freqs=freqs)
+
+    rows = list()
+    for _ in range(n_subjects):
+        rows.append(dict(data=make_tfr(False), condition="a"))
+        rows.append(dict(data=make_tfr(True), condition="b"))
+    df = pd.DataFrame(rows)
+    result = cluster_test(
+        df,
+        "data ~ condition",
+        n_permutations=100,
+        tail=1,
+        seed=1,
+        buffer_size=None,
+        out_type="indices",
+    )
+    assert result.stat_obs.ndim == 3  # (time, freq, channel)
+    result.plot_cluster_time_frequency(df["data"].iloc[0])
+    plt.close("all")
+
+
+def test_cluster_test_plot_cluster_time_frequency_wrong_dim():
+    """Test plot_cluster_time_frequency rejects 2D (time x channel) clusters."""
+    pd = pytest.importorskip("pandas")
+
+    condition1_1d, condition2_1d, _, _ = _get_conditions()
+    df = pd.DataFrame(dict(data=[condition1_1d, condition2_1d], condition=["a", "b"]))
+    result = cluster_test(
+        df,
+        "data ~ condition",
+        n_permutations=100,
+        tail=1,
+        seed=1,
+        buffer_size=None,
+        out_type="indices",
+    )
+    with pytest.raises(ValueError, match="requires a 3D"):
+        result.plot_cluster_time_frequency(None)
