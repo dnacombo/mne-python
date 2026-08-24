@@ -19,7 +19,7 @@ from ..evoked import Evoked
 from ..parallel import parallel_func
 from ..source_estimate import MixedSourceEstimate, SourceEstimate, VolSourceEstimate
 from ..source_space import SourceSpaces
-from ..time_frequency import BaseTFR
+from ..time_frequency import BaseTFR, EpochsTFR
 from ..utils import (
     GetEpochsMixin,
     ProgressBar,
@@ -1749,7 +1749,7 @@ def _validate_cluster_df(df: DataFrame, dv_name: str, iv_names: list[str]):
         all_shapes = set(
             df[dv_name].map(lambda x: x.shape[1:])
         )  # first dim may vary (participants or epochs)
-    elif isinstance(inst, (BaseEpochs | BaseTFR)):
+    elif isinstance(inst, (BaseEpochs | EpochsTFR)):
         all_shapes = set(df[dv_name].map(lambda x: x.get_data().shape[1:]))
     else:
         all_shapes = set(df[dv_name].map(lambda x: x.get_data().shape))
@@ -1775,7 +1775,9 @@ def cluster_test(
     tail: Literal[-1, 0, 1] = 0,
     threshold=None,
     n_permutations: str | int = 1024,
-    adjacency: sparse.spmatrix | None | False = None,  # should be None (default)
+    adjacency: sparse.spmatrix
+    | None
+    | Literal[False] = None,  # should be None (default)
     max_step: int = 1,  # TODO may need to provide `max_step_time` and `max_step_freq`
     exclude: list | None = None,  # TODO needs rethink because user passes MNE objects
     step_down_p: float = 0.0,
