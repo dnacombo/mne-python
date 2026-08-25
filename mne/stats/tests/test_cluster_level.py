@@ -1170,6 +1170,70 @@ def test_cluster_test_rm_anova():
         assert_array_equal(clu1, clu2)
 
 
+def test_cluster_test_rm_anova_one_way():
+    """Test the single-factor, >2-level repeated-measures ANOVA branch."""
+    pd = pytest.importorskip("pandas")
+
+    rng = np.random.default_rng(seed=0)
+    n_subjects, n_channels, n_times = 8, 3, 6
+    info = create_info(n_channels, sfreq=100.0, ch_types="eeg")
+    factor_levels = [3]
+    conditions = ["a1", "a2", "a3"]
+    data = {
+        cond: rng.normal(size=(n_subjects, n_channels, n_times)) for cond in conditions
+    }
+    # inject a main effect (monotonic across levels) in the first 2 channels
+    data["a1"][:, :2] -= 3
+    data["a3"][:, :2] += 3
+
+    # reference: old-style call with a hand-rolled f_mway_rm stat_fun
+    def stat_fun(*args):
+        return f_mway_rm(
+            np.swapaxes(np.asarray(args), 1, 0),
+            factor_levels=factor_levels,
+            effects="A",
+            return_pvals=False,
+        )[0]
+
+    f_thresh = f_threshold_mway_rm(n_subjects, factor_levels, effects="A", pvalue=0.001)
+    # channels last, as required by permutation_cluster_test
+    X_old = [data[cond].transpose(0, 2, 1) for cond in conditions]
+    kwargs = dict(
+        n_permutations=100,
+        tail=1,
+        seed=3,
+        buffer_size=None,
+        out_type="mask",
+        threshold=f_thresh,
+    )
+    F_obs, clusters, cluster_pvals, H0 = permutation_cluster_test(
+        X_old, stat_fun=stat_fun, **kwargs
+    )
+
+    # new API: one row per (subject, level), with an EvokedArray holding that
+    # subject's data for that level
+    rows = list()
+    for cond in conditions:
+        for subj in range(n_subjects):
+            rows.append(
+                dict(
+                    data=EvokedArray(data[cond][subj], info, tmin=0),
+                    level=cond,
+                    subject=subj,
+                )
+            )
+    df = pd.DataFrame(rows)
+    result = cluster_test(df, "data ~ level", within_id="subject", **kwargs)
+
+    assert result.stat_name == "F-statistic (repeated-measures ANOVA)"
+    assert_array_almost_equal(result.stat_obs, F_obs)
+    assert_array_almost_equal(result.H0, H0)
+    assert_array_almost_equal(result.cluster_p_values, cluster_pvals)
+    assert len(result.clusters) == len(clusters)
+    for clu1, clu2 in zip(result.clusters, clusters):
+        assert_array_equal(clu1, clu2)
+
+
 def test_cluster_test_formula_validation():
     """Test that cluster_test raises clear errors for unsupported formulas."""
     pd = pytest.importorskip("pandas")
@@ -1200,6 +1264,22 @@ def test_cluster_test_formula_validation():
     df_unbalanced = pd.DataFrame(rows)
     with pytest.raises(ValueError, match="must have exactly"):
         cluster_test(df_unbalanced, "data ~ a:b", within_id="subject")
+
+    # unbalanced repeated-measures design, single factor with >2 levels (e.g. an
+    # unaccounted-for second factor also varying, or a genuine duplicate/extra
+    # observation) -- must be caught, not silently treated as a between-groups test
+    rows = [
+        dict(data=condition1_1d, level="x", subject=0),
+        dict(data=condition2_1d, level="y", subject=0),
+        dict(data=condition1_1d, level="z", subject=0),
+        dict(data=condition1_1d, level="z", subject=0),  # extra row for subject 0
+        dict(data=condition1_1d, level="x", subject=1),
+        dict(data=condition2_1d, level="y", subject=1),
+        dict(data=condition1_1d, level="z", subject=1),
+    ]
+    df_unbalanced_1way = pd.DataFrame(rows)
+    with pytest.raises(ValueError, match="must have exactly"):
+        cluster_test(df_unbalanced_1way, "data ~ level", within_id="subject")
 
 
 @pytest.mark.filterwarnings("ignore:FigureCanvasAgg is non-interactive.*:UserWarning")

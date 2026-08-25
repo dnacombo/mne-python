@@ -1804,13 +1804,16 @@ def cluster_test(
         effect and an interaction) requires calling :func:`cluster_test` once per
         effect.
     within_id : None | str
-        Name of column in ``df`` to use in identifying within-group contrasts. If
-        ``None``, will perform a between-group test. Ignored if ``formula`` names a
-        single factor and the number of groups (unique values in the independent
-        variable column of ``df``) is greater than 2. Required if ``formula``'s
-        right-hand side is an interaction term (e.g. ``"data ~ a:b"``), in which case
-        each combination of ``within_id`` and the factors must appear exactly once
-        (a fully balanced repeated-measures design).
+        Name of column in ``df`` to use in identifying within-subject/repeated-measures
+        contrasts. If ``None``, will perform a between-group test. Required if
+        ``formula``'s right-hand side is an interaction term (e.g. ``"data ~ a:b"``).
+        Whenever ``within_id`` is given and the independent variable has 2 or more
+        groups (unique values, for a single factor) or cells (unique combinations,
+        for an interaction), each combination of ``within_id`` and the factor(s)
+        must appear exactly once (a fully balanced repeated-measures design); a
+        single factor with exactly 2 groups is tested with a paired t-test, and
+        anything else (more groups, or an interaction) with a repeated-measures
+        ANOVA.
     %(stat_fun_clust_both)s
     %(tail_clust)s
     %(threshold_clust_both)s
@@ -1879,9 +1882,11 @@ def cluster_test(
             "replication."
         )
     # for within-subject designs, check that each subject has one observation per
-    # combination of factor(s) (2, for a simple paired test; more for an interaction)
+    # combination of factor(s) -- one row per level for a single factor (2 levels:
+    # paired t-test; more: repeated-measures ANOVA), one row per cell for an
+    # interaction (always a repeated-measures ANOVA)
     n_groups = df[factor_names].drop_duplicates().shape[0]
-    if within_id and (is_interaction or n_groups == 2):
+    if within_id and (is_interaction or n_groups >= 2):
         df = df.copy(deep=False)  # Don't mutate input dataframe row order!
         df.sort_values([*factor_names, within_id], inplace=True)
         counts = df[within_id].value_counts()
@@ -1923,7 +1928,14 @@ def cluster_test(
         kind = "within"  # single group -- e.g. already-subtracted paired data
         X = X[0]
     elif len(X) > 2:
-        kind = "between"
+        if within_id in df:
+            # repeated-measures one-way ANOVA -- same f_mway_rm machinery as the
+            # interaction case above, just with a single factor
+            kind = "within_rm"
+            factor_levels = [len(X)]
+            rm_effects = "A"
+        else:
+            kind = "between"
     elif (
         len(set(x.shape for x in X)) > 1
     ):  # check if there are unequal observations in each group
