@@ -1,8 +1,6 @@
 name: CircleCI scheduled
 
 on:  # yamllint disable-line rule:truthy
-  schedule:
-    - cron: '0 10 * * *'  # 10:00 UTC, after the 04:00 and 06:00 UTC CircleCI scheduled runs finish
   workflow_dispatch:
 
 jobs:
